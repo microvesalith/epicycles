@@ -1,5 +1,6 @@
 {
   "name": "Epicycle Sketch Reconstructor",
   "description": "A didactic web app demonstrating Discrete Fourier Series by reconstructing user sketches with a chain of rotating epicycles.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [],
+  "majorCapabilities": []
 }
