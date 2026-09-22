@@ -2,22 +2,40 @@
 import { Point, Complex, Coefficient } from '../types';
 
 /**
- * Resamples a polyline to N points uniformly spaced in time.
+ * Ensures a polyline is closed for periodic Fourier representation.
+ * Connects the last point back to the first point if they are not identical.
  */
-export const resampleStroke = (points: Point[], N: number): Complex[] => {
+export const closeStroke = (points: Point[]): Point[] => {
+  if (points.length < 2) return points;
+  const first = points[0];
+  const last = points[points.length - 1];
+  const dist = Math.hypot(last.x - first.x, last.y - first.y);
+  if (dist > 1e-4) {
+    return [...points, { x: first.x, y: first.y }];
+  }
+  return points;
+};
+
+/**
+ * Resamples a polyline to N points uniformly spaced in time.
+ * If closeLoop is true, it ensures the last point connects back to the first point
+ * so the perimeter and sampled points form a seamless periodic loop.
+ */
+export const resampleStroke = (points: Point[], N: number, closeLoop: boolean = true): Complex[] => {
   if (points.length < 2) return [];
+
+  const pts = closeLoop ? closeStroke(points) : points;
 
   // Calculate cumulative distance
   const distances = [0];
-  for (let i = 1; i < points.length; i++) {
-    const d = Math.sqrt(
-      Math.pow(points[i].x - points[i - 1].x, 2) +
-      Math.pow(points[i].y - points[i - 1].y, 2)
-    );
+  for (let i = 1; i < pts.length; i++) {
+    const d = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
     distances.push(distances[i - 1] + d);
   }
 
   const totalLength = distances[distances.length - 1];
+  if (totalLength === 0) return [];
+
   const resampled: Complex[] = [];
 
   for (let i = 0; i < N; i++) {
@@ -27,7 +45,7 @@ export const resampleStroke = (points: Point[], N: number): Complex[] => {
     let idx = distances.findIndex(d => d >= targetDist);
     if (idx === -1) idx = distances.length - 1;
     if (idx === 0) {
-      resampled.push({ re: points[0].x, im: points[0].y });
+      resampled.push({ re: pts[0].x, im: pts[0].y });
       continue;
     }
 
@@ -36,8 +54,8 @@ export const resampleStroke = (points: Point[], N: number): Complex[] => {
     const segmentDist = nextDist - prevDist;
     const t = segmentDist === 0 ? 0 : (targetDist - prevDist) / segmentDist;
 
-    const x = points[idx - 1].x + (points[idx].x - points[idx - 1].x) * t;
-    const y = points[idx - 1].y + (points[idx].y - points[idx - 1].y) * t;
+    const x = pts[idx - 1].x + (pts[idx].x - pts[idx - 1].x) * t;
+    const y = pts[idx - 1].y + (pts[idx].y - pts[idx - 1].y) * t;
     resampled.push({ re: x, im: y });
   }
 
@@ -46,32 +64,45 @@ export const resampleStroke = (points: Point[], N: number): Complex[] => {
 
 /**
  * Centering and Auto-scaling the signal
+ * Subtracts the centroid (mean) so that the DC offset (k=0 DFT component) is exactly zero,
+ * ensuring the epicycle chain and drawing are centered with zero vertical bias.
  */
 export const normalizeSignal = (signal: Complex[], width: number, height: number): Complex[] => {
   if (signal.length === 0) return [];
   
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  // 1. Calculate centroid (mean) of the signal
+  let sumRe = 0;
+  let sumIm = 0;
   signal.forEach(p => {
-    minX = Math.min(minX, p.re);
-    maxX = Math.max(maxX, p.re);
-    minY = Math.min(minY, p.im);
-    maxY = Math.max(maxY, p.im);
+    sumRe += p.re;
+    sumIm += p.im;
+  });
+  const meanRe = sumRe / signal.length;
+  const meanIm = sumIm / signal.length;
+
+  // 2. Center signal strictly around centroid (guarantees C_0 = 0 in DFT)
+  const centered = signal.map(p => ({
+    re: p.re - meanRe,
+    im: p.im - meanIm
+  }));
+
+  // 3. Compute symmetric bounding extents from center
+  let maxExtentX = 0;
+  let maxExtentY = 0;
+  centered.forEach(p => {
+    maxExtentX = Math.max(maxExtentX, Math.abs(p.re));
+    maxExtentY = Math.max(maxExtentY, Math.abs(p.im));
   });
 
-  const centerX = (minX + maxX) / 2;
-  const centerY = (minY + maxY) / 2;
-  const strokeW = maxX - minX;
-  const strokeH = maxY - minY;
-
-  const margin = 0.2; // 20% margin
+  const margin = 0.25; // 25% margin for comfortable visualization
   const scale = Math.min(
-    (width * (1 - margin)) / (strokeW || 1),
-    (height * (1 - margin)) / (strokeH || 1)
+    ((width / 2) * (1 - margin)) / (maxExtentX || 1),
+    ((height / 2) * (1 - margin)) / (maxExtentY || 1)
   );
 
-  return signal.map(p => ({
-    re: (p.re - centerX) * scale,
-    im: (p.im - centerY) * scale
+  return centered.map(p => ({
+    re: p.re * scale,
+    im: p.im * scale
   }));
 };
 
@@ -126,4 +157,23 @@ export const evaluateSum = (coeffs: Coefficient[], t: number): Point[] => {
   }
 
   return partialSums;
+};
+
+/**
+ * Pre-evaluates the full reconstructed Fourier curve for t in [0, 1].
+ * Guarantees that the end point connects seamlessly to the exact start coordinate.
+ */
+export const computeFullCurve = (coeffs: Coefficient[], steps = 600): Point[] => {
+  if (coeffs.length === 0) return [];
+  const pts: Point[] = [];
+  for (let i = 0; i <= steps; i++) {
+    const tVal = i / steps;
+    const sums = evaluateSum(coeffs, tVal);
+    pts.push(sums[sums.length - 1]);
+  }
+  // Clamp the last point to exact start coordinate so start and end are identical
+  if (pts.length > 0) {
+    pts[pts.length - 1] = { x: pts[0].x, y: pts[0].y };
+  }
+  return pts;
 };

@@ -15,10 +15,19 @@ const centerShape = (points: Point[], targetX = 300, targetY = 300): Point[] => 
   });
   const cx = (minX + maxX) / 2;
   const cy = (minY + maxY) / 2;
-  return points.map(p => ({
+  const centered = points.map(p => ({
     x: p.x - cx + targetX,
     y: p.y - cy + targetY
   }));
+  // Guarantee exact bitwise equality for closed shapes
+  if (centered.length > 2) {
+    const first = centered[0];
+    const last = centered[centered.length - 1];
+    if (Math.hypot(last.x - first.x, last.y - first.y) < 2.0) {
+      centered[centered.length - 1] = { x: first.x, y: first.y };
+    }
+  }
+  return centered;
 };
 
 export const loadSampleStar = (): Point[] => {
@@ -34,6 +43,7 @@ export const loadSampleStar = (): Point[] => {
       y: Math.sin(angle) * r
     });
   }
+  points[points.length - 1] = { ...points[0] };
   return centerShape(points);
 };
 
@@ -55,6 +65,7 @@ export const generateTriangle = (): Point[] => {
     const angle = (i * 2 * Math.PI) / 3 - Math.PI / 2;
     points.push({ x: Math.cos(angle) * r, y: Math.sin(angle) * r });
   }
+  points[points.length - 1] = { ...points[0] };
   return centerShape(points);
 };
 
@@ -65,6 +76,7 @@ export const generatePentagon = (): Point[] => {
     const angle = (i * 2 * Math.PI) / 5 - Math.PI / 2;
     points.push({ x: Math.cos(angle) * r, y: Math.sin(angle) * r });
   }
+  points[points.length - 1] = { ...points[0] };
   return centerShape(points);
 };
 
@@ -78,6 +90,7 @@ export const generateHeart = (): Point[] => {
     const y = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
     points.push({ x: x * 10, y: y * 10 });
   }
+  points[points.length - 1] = { ...points[0] };
   return centerShape(points);
 };
 
@@ -89,6 +102,7 @@ export const generateCircle = (): Point[] => {
     const angle = (i / steps) * Math.PI * 2;
     points.push({ x: Math.cos(angle) * r, y: Math.sin(angle) * r });
   }
+  points[points.length - 1] = { ...points[0] };
   return centerShape(points);
 };
 
